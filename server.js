@@ -67,21 +67,22 @@ db.serialize(() => {
   )`);
 });
 
-// ========== GOOGLE AUTH ==========
 const googleClient = GOOGLE_CLIENT_ID ? new OAuth2Client(GOOGLE_CLIENT_ID) : null;
+
 if (GOOGLE_CLIENT_ID) {
   const masked = GOOGLE_CLIENT_ID.replace(/^(.{6}).+(.{6})$/, '$1...$2');
-  console.log('✅ Google Client ID loaded:', masked);
+  console.log('Google Client ID loaded:', masked);
 } else {
-  console.log('⚠️ Google Client ID not configured.');
+  console.log('Google Client ID not configured.');
 }
 
+// ✅ ADDED HERE — BEFORE ANY USAGE
 async function verifyIdToken(idToken) {
   if (!googleClient) throw new Error('Google client not configured');
   const ticket = await googleClient.verifyIdToken({ idToken, audience: GOOGLE_CLIENT_ID });
-  return ticket.getPayload();
+  const payload = ticket.getPayload();
+  return payload; // includes email, name, sub
 }
-
 // ========== IP QUOTA MIDDLEWARE ==========
 const maxPerMinuteDB = parseInt(process.env.MAX_PER_MINUTE || '60', 10);
 function ipQuotaMiddleware(req, res, next) {
