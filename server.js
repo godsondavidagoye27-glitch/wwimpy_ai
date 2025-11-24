@@ -1,3 +1,4 @@
+// ========== DEPENDENCIES ==========
 const express = require('express');
 const axios = require('axios');
 const path = require('path');
@@ -5,47 +6,39 @@ const dotenv = require('dotenv');
 const cors = require('cors');
 const rateLimit = require('express-rate-limit');
 const sqlite3 = require('sqlite3').verbose();
-const {OAuth2Client} = require('google-auth-library');
+const { OAuth2Client } = require('google-auth-library');
 
 dotenv.config();
 
+// ========== SETUP ==========
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// Env keys
 const OPENAI_KEY = process.env.OPENAI_API_KEY;
 const OPENROUTER_KEY = process.env.OPENROUTER_API_KEY;
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || null;
 
-// basic rate limiter
-const apiLimiter = rateLimit({
-  windowMs: 60 * 1000, // 1 minute
-  max: 30, // limit each IP to 30 requests per windowMs
-  standardHeaders: true,
-  legacyHeaders: false,
-});
-
+// ========== MIDDLEWARE ==========
 app.use(cors());
 app.use(express.json({ limit: '1mb' }));
+app.use(express.static(path.join(__dirname, 'public'))); // ✅ Serve static files from /public
 
-// Serve static files from current directory
-app.use(express.static(path.join(__dirname, '.')));
-
-// Simple request logger for debugging
+// Logger
 app.use((req, res, next) => {
   console.log(new Date().toISOString(), req.method, req.path);
   next();
 });
 
-// Handle preflight for /api/chat explicitly
-app.options('/api/chat', (req, res) => {
-  res.sendStatus(204);
+// Rate limiter
+const apiLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
 });
 
-// Respond to non-POST methods on /api/chat with a clear JSON 405
-app.all('/api/chat', apiLimiter, (req, res, next) => {
-  if (req.method === 'POST') return next();
-  res.status(405).json({ error: 'Method Not Allowed. Use POST /api/chat' });
-});
-
-// Initialize SQLite DB
+// ========== DATABASE ==========
 const DB_PATH = path.join(__dirname, 'wimpy.db');
 const db = new sqlite3.Database(DB_PATH);
 db.serialize(() => {
@@ -65,110 +58,134 @@ db.serialize(() => {
   )`);
 });
 
-const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || null;
+// ========== GOOGLE AUTH ==========
 const googleClient = GOOGLE_CLIENT_ID ? new OAuth2Client(GOOGLE_CLIENT_ID) : null;
-
 if (GOOGLE_CLIENT_ID) {
   const masked = GOOGLE_CLIENT_ID.replace(/^(.{6}).+(.{6})$/, '$1...$2');
-  console.log('Google Client ID loaded:', masked);
+  console.log('✅ Google Client ID loaded:', masked);
 } else {
-  console.log('Google Client ID not configured.');
+  console.log('⚠️ Google Client ID not configured.');
 }
 
-// Validation helper
+async function verifyIdToken(idToken) {
+  if (!googleClient) throw new Error('Google client not configured');
+  const ticket = await googleClient.verifyIdToken({ idToken, audience: GOOGLE_CLIENT_ID });
+  return ticket.getPayload();
+}
+
+// ========== IP QUOTA MIDDLEWARE ==========
+const maxPerMinuteDB = parseInt(process.env.MAX_PER_MINUTE || '60', 10);
+function ipQuotaMiddleware(req, res, next) {
+  const ip = req.ip || req.connection.remoteAddress || 'unknown';
+  const windowStart = Math.floor(Date.now() / 60000);
+  db.get('SELECT id, count FROM ip_quota WHERE ip = ? AND window_start = ?', [ip, windowStart], (err, row) => {
+    if (err) return next();
+    if (!row) {
+      db.run('INSERT INTO ip_quota (ip, window_start, count) VALUES (?, ?, 1)', [ip, windowStart]);
+      return next();
+    }
+    if (row.count >= maxPerMinuteDB) return res.status(429).json({ error: 'IP quota exceeded' });
+    db.run('UPDATE ip_quota SET count = count + 1 WHERE ip = ? AND window_start = ?', [ip, windowStart]);
+    return next();
+  });
+}
+
+// ========== ROOT ROUTE — ✅ FIXES "Cannot GET /" ==========
+app.get('/', (req, res) => {
+  res.send(`
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8">
+      <title>WIMPY AI</title>
+      <style>
+        body { 
+          background: #0a0a0a; 
+          color: #0ff; 
+          font-family: 'Courier New', monospace; 
+          padding: 2rem;
+          margin: 0;
+        }
+        h1 { 
+          color: gold; 
+          text-shadow: 0 0 10px gold; 
+          margin-bottom: 1rem;
+        }
+        .status { color: lime; }
+        .mode { color: red; }
+      </style>
+    </head>
+    <body>
+      <h1>⚡ WIMPY AI</h1>
+      <p>✅ Server is live!</p>
+      <p>Theme: <span style="color: gold;">Cyberpunk Gold & Green</span></p>
+      <p>Ready for <span class="status">serious</span> or <span class="mode">unhinged</span> mode.</p>
+      <p>Endpoints: <code>/api/chat</code>, <code>/api/history</code></p>
+    </body>
+    </html>
+  `);
+});
+
+// ========== API ROUTES ==========
+// Preflight & method restriction
+app.options('/api/chat', (req, res) => res.sendStatus(204));
+app.all('/api/chat', apiLimiter, (req, res, next) => {
+  if (req.method === 'POST') return next();
+  res.status(405).json({ error: 'Method Not Allowed. Use POST /api/chat' });
+});
+
 function validMessages(messages) {
   if (!Array.isArray(messages)) return false;
   return messages.every(m => m && typeof m.role === 'string' && (m.content || m.text));
 }
 
-// Verify Google ID token (returns payload with email)
-async function verifyIdToken(idToken) {
-  if (!googleClient) throw new Error('Google client not configured');
-  const ticket = await googleClient.verifyIdToken({ idToken, audience: GOOGLE_CLIENT_ID });
-  const payload = ticket.getPayload();
-  return payload; // includes email, name, sub
-}
-
-// IP quota middleware using DB: limit to maxPerMinute per IP
-const maxPerMinuteDB = parseInt(process.env.MAX_PER_MINUTE || '60', 10);
-async function ipQuotaMiddleware(req, res, next) {
-  try {
-    const ip = req.ip || req.connection.remoteAddress || 'unknown';
-    const windowStart = Math.floor(Date.now() / 60000); // minute window
-    db.get('SELECT id, count, window_start FROM ip_quota WHERE ip = ? AND window_start = ?', [ip, windowStart], (err, row) => {
-      if (err) return next();
-      if (!row) {
-        db.run('INSERT INTO ip_quota (ip, window_start, count) VALUES (?, ?, ?)', [ip, windowStart, 1]);
-        return next();
-      }
-      if (row.count >= maxPerMinuteDB) return res.status(429).json({ error: 'IP quota exceeded' });
-      db.run('UPDATE ip_quota SET count = count + 1 WHERE id = ?', [row.id]);
-      return next();
-    });
-  } catch (e) {
-    return next();
-  }
-}
-
-// Chat proxy with rate limiting and validation
+// POST /api/chat
 app.post('/api/chat', apiLimiter, ipQuotaMiddleware, async (req, res) => {
-  if (!OPENAI_KEY && !OPENROUTER_KEY) return res.status(500).json({ error: 'Server misconfigured: no API key provided (OPENAI_API_KEY or OPENROUTER_API_KEY)' });
+  if (!OPENAI_KEY && !OPENROUTER_KEY) {
+    return res.status(500).json({ error: 'No API key configured' });
+  }
 
   const { model, messages } = req.body;
-  if (!validMessages(messages)) return res.status(400).json({ error: 'Invalid messages format' });
+  if (!validMessages(messages)) {
+    return res.status(400).json({ error: 'Invalid messages format' });
+  }
 
   try {
     let resp;
+    const headers = { 'Content-Type': 'application/json' };
+    
     if (OPENROUTER_KEY) {
-      // Use OpenRouter
+      headers.Authorization = `Bearer ${OPENROUTER_KEY}`;
       resp = await axios.post('https://openrouter.ai/api/v1/chat/completions', {
         model: model || 'openchat/openchat-7b:free',
         messages,
-      }, {
-        headers: {
-          'Authorization': `Bearer ${OPENROUTER_KEY}`,
-          'Content-Type': 'application/json'
-        }
-      });
-    } else if (OPENAI_KEY) {
-      // Use OpenAI
+      }, { headers });
+    } else {
+      headers.Authorization = `Bearer ${OPENAI_KEY}`;
       resp = await axios.post('https://api.openai.com/v1/chat/completions', {
         model: model || 'gpt-4o-mini',
         messages,
         max_tokens: 1000,
-      }, {
-        headers: {
-          'Authorization': `Bearer ${OPENAI_KEY}`,
-          'Content-Type': 'application/json'
-        }
-      });
-    } else {
-      return res.status(500).json({ error: 'Server misconfigured: no API key provided (OPENAI_API_KEY or OPENROUTER_API_KEY)' });
+      }, { headers });
     }
-
     return res.json(resp.data);
   } catch (err) {
-    console.error('Proxy error:', err.response ? err.response.data : err.message);
-    const status = err.response ? err.response.status : 500;
-    const data = err.response ? err.response.data : { error: err.message };
+    const status = err.response?.status || 500;
+    const data = err.response?.data || { error: err.message };
     return res.status(status).json(data);
   }
 });
 
-// Save chat history (expects { user: string, items: [ { role, text, html } ] })
-// Persist history: requires verified Google ID token (Authorization: Bearer <id_token>) or allows 'local' user without token
+// POST /api/history
 app.post('/api/history', apiLimiter, ipQuotaMiddleware, async (req, res) => {
   try {
+    // (your existing logic — unchanged)
     const auth = req.headers.authorization;
     let verifiedEmail = null;
-    if (auth && auth.startsWith('Bearer ')) {
+    if (auth?.startsWith('Bearer ')) {
       const token = auth.slice(7);
-      try {
-        const payload = await verifyIdToken(token);
-        verifiedEmail = payload.email;
-      } catch (e) {
-        return res.status(401).json({ error: 'Invalid ID token' });
-      }
+      try { verifiedEmail = (await verifyIdToken(token)).email; } 
+      catch (e) { return res.status(401).json({ error: 'Invalid ID token' }); }
     }
 
     const { user, items } = req.body;
@@ -177,9 +194,7 @@ app.post('/api/history', apiLimiter, ipQuotaMiddleware, async (req, res) => {
 
     const stmt = db.prepare('INSERT INTO chats (user, role, text, html) VALUES (?, ?, ?, ?)');
     db.serialize(() => {
-      items.forEach(it => {
-        stmt.run(targetUser, it.role || 'user', it.text || '', it.html || null);
-      });
+      items.forEach(it => stmt.run(targetUser, it.role || 'user', it.text || '', it.html || null));
       stmt.finalize(err => {
         if (err) return res.status(500).json({ error: 'DB write failed' });
         return res.json({ ok: true });
@@ -190,111 +205,62 @@ app.post('/api/history', apiLimiter, ipQuotaMiddleware, async (req, res) => {
   }
 });
 
-// Fetch history: GET /api/history?user=email
-// GET /api/history?limit=50&offset=0  - requires Authorization bearer id_token or allows local via user=local
-app.get('/api/history', apiLimiter, ipQuotaMiddleware, async (req, res) => {
-  try {
-    const auth = req.headers.authorization;
-    let verifiedEmail = null;
-    if (auth && auth.startsWith('Bearer ')) {
-      const token = auth.slice(7);
-      try {
-        const payload = await verifyIdToken(token);
-        verifiedEmail = payload.email;
-      } catch (e) {
-        return res.status(401).json({ error: 'Invalid ID token' });
-      }
-    }
+// GET /api/history
+app.get('/api/history', apiLimiter, ipQuotaMiddleware, (req, res) => {
+  const auth = req.headers.authorization;
+  let verifiedEmail = null;
+  if (auth?.startsWith('Bearer ')) {
+    const token = auth.slice(7);
+    try { verifiedEmail = (await verifyIdToken(token)).email; } 
+    catch (e) { return res.status(401).json({ error: 'Invalid ID token' }); }
+  }
 
-    const user = verifiedEmail || req.query.user || 'local';
-    const limit = Math.min(parseInt(req.query.limit || '200', 10), 1000);
-    const offset = Math.max(parseInt(req.query.offset || '0', 10), 0);
+  const user = verifiedEmail || req.query.user || 'local';
+  const limit = Math.min(parseInt(req.query.limit || '200', 10), 1000);
+  const offset = Math.max(parseInt(req.query.offset || '0', 10), 0);
 
-    db.all('SELECT id, role, text, html, created_at FROM chats WHERE user = ? ORDER BY id ASC LIMIT ? OFFSET ?', [user, limit, offset], (err, rows) => {
+  db.all('SELECT id, role, text, html, created_at FROM chats WHERE user = ? ORDER BY id ASC LIMIT ? OFFSET ?', 
+    [user, limit, offset], 
+    (err, rows) => {
       if (err) return res.status(500).json({ error: 'DB read failed' });
       return res.json({ items: rows });
-    });
-  } catch (err) {
-    return res.status(500).json({ error: 'Server error' });
-  }
+    }
+  );
 });
 
-// Verify ID token endpoint (useful for testing from client)
+// POST /api/verify-google
 app.post('/api/verify-google', apiLimiter, async (req, res) => {
+  const token = req.body.id_token || (req.headers.authorization?.startsWith('Bearer ') ? req.headers.authorization.slice(7) : null);
+  if (!token) return res.status(400).json({ error: 'Missing id_token' });
   try {
-    const token = req.body.id_token || (req.headers.authorization && req.headers.authorization.startsWith('Bearer ') ? req.headers.authorization.slice(7) : null);
-    if (!token) return res.status(400).json({ error: 'Missing id_token' });
-    try {
-      const payload = await verifyIdToken(token);
-      return res.json({ ok: true, payload });
-    } catch (e) {
-      return res.status(401).json({ error: 'Invalid ID token', detail: e.message });
-    }
+    const payload = await verifyIdToken(token);
+    return res.json({ ok: true, payload });
   } catch (e) {
-    return res.status(500).json({ error: 'Server error' });
+    return res.status(401).json({ error: 'Invalid ID token', detail: e.message });
   }
 });
 
-app.listen(PORT, () => {
-  console.log(`WIMPY proxy server running on http://localhost:${PORT}`);
-});
-
-// DELETE /api/history - clear user's history (requires ID token or user param if local)
-app.delete('/api/history', apiLimiter, ipQuotaMiddleware, async (req, res) => {
-  try {
-    const auth = req.headers.authorization;
-    let verifiedEmail = null;
-    if (auth && auth.startsWith('Bearer ')) {
-      const token = auth.slice(7);
-      try {
-        const payload = await verifyIdToken(token);
-        verifiedEmail = payload.email;
-      } catch (e) {
-        return res.status(401).json({ error: 'Invalid ID token' });
-      }
-    }
-    const user = verifiedEmail || req.body.user;
-    if (!user) return res.status(400).json({ error: 'User required' });
-    db.run('DELETE FROM chats WHERE user = ?', [user], function(err) {
-      if (err) return res.status(500).json({ error: 'DB delete failed' });
-      return res.json({ ok: true, deleted: this.changes });
-    });
-  } catch (err) {
-    return res.status(500).json({ error: 'Server error' });
+// DELETE /api/history
+app.delete('/api/history', apiLimiter, ipQuotaMiddleware, (req, res) => {
+  const auth = req.headers.authorization;
+  let verifiedEmail = null;
+  if (auth?.startsWith('Bearer ')) {
+    const token = auth.slice(7);
+    try { verifiedEmail = (await verifyIdToken(token)).email; } 
+    catch (e) { return res.status(401).json({ error: 'Invalid ID token' }); }
   }
+  const user = verifiedEmail || req.body.user;
+  if (!user) return res.status(400).json({ error: 'User required' });
+  
+  db.run('DELETE FROM chats WHERE user = ?', [user], function(err) {
+    if (err) return res.status(500).json({ error: 'DB delete failed' });
+    return res.json({ ok: true, deleted: this.changes });
+  });
 });
 
-const express = require('express');
-const path = require('path');
-
-const app = express();
-
-// 👇 ADD THIS — serve static files (optional but recommended)
-app.use(express.static('public')); // serves files from /public folder
-
-// 👇 ADD THIS — fallback route for /
-app.get('/', (req, res) => {
-  // Option A: Simple message (quick test)
-  res.send(`
-    <html>
-      <body style="background: #0a0a0a; color: #0ff; font-family: monospace; padding: 2rem;">
-        <h1>⚡ WIMPY AI</h1>
-        <p>✅ Server is live!</p>
-        <p>Theme: <span style="color: gold;">Cyberpunk Gold & Green</span></p>
-        <p>Ready for <span style="color: lime;">serious</span> or <span style="color: red;">unhinged</span> mode.</p>
-      </body>
-    </html>
-  `);
-});
-
-// Optional: catch-all for SPA (if you're building a frontend app)
-app.get('*', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
-});
-
-// 🔑 Start server on Render's port
-const PORT = process.env.PORT || 3000;
+// ========== START SERVER ==========
 app.listen(PORT, () => {
-  console.log(`🚀 Wimpy AI running on port ${PORT}`);
+  console.log(`🚀 WIMPY AI running on http://localhost:${PORT}`);
+  console.log(`✅ Root route: GET /`);
+  console.log(`✅ API endpoints: /api/chat, /api/history, /api/verify-google`);
 });
-
