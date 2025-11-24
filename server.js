@@ -1,6 +1,16 @@
+process.on('uncaughtException', (err) => {
+  console.error('🚨 Uncaught Exception:', err);
+  process.exit(1);
+});
+
+process.on('unhandledRejection', (err) => {
+  console.error('🚨 Unhandled Rejection:', err);
+  process.exit(1);
+});
+
 // ========== DEPENDENCIES ==========
 const express = require('express');
-const axios = require('axios');
+const axios = require('axios'); // <-- fixed comment
 const path = require('path');
 const dotenv = require('dotenv');
 const cors = require('cors');
@@ -22,7 +32,7 @@ const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || null;
 // ========== MIDDLEWARE ==========
 app.use(cors());
 app.use(express.json({ limit: '1mb' }));
-app.use(express.static('public'));
+app.use(express.static(path.join(__dirname, 'public')));
 
 // Logger
 app.use((req, res, next) => {
@@ -38,82 +48,71 @@ const apiLimiter = rateLimit({
   legacyHeaders: false,
 });
 
-// ========== DATABASE (IN-MEMORY FOR RENDER SAFETY) ==========
-let db = null;
+// ========== DATABASE ==========
+const DB_PATH = path.join(__dirname, 'wimpy.db');
+const db = new sqlite3.Database(DB_PATH);
 
-try {
-  db = new sqlite3.Database(':memory:');
-  db.serialize(() => {
-    db.run(`CREATE TABLE chats (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      user TEXT,
-      role TEXT,
-      text TEXT,
-      html TEXT,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    )`);
-    
-    db.run(`CREATE TABLE ip_quota (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      ip TEXT,
-      window_start INTEGER,
-      count INTEGER
-    )`);
-  });
-  console.log('✅ Using in-memory SQLite database');
-} catch (err) {
-  console.error('❌ Failed to initialize DB:', err.message);
-}
+db.serialize(() => {
+  db.run(`CREATE TABLE IF NOT EXISTS chats (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user TEXT,
+    role TEXT,
+    text TEXT,
+    html TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  )`);
+
+  db.run(`CREATE TABLE IF NOT EXISTS ip_quota (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ip TEXT,
+    window_start INTEGER,
+    count INTEGER
+  )`);
+});
 
 // ========== GOOGLE AUTH ==========
 const googleClient = GOOGLE_CLIENT_ID ? new OAuth2Client(GOOGLE_CLIENT_ID) : null;
 
-if (GOOGLE_CLIENT_ID) {
-  const masked = GOOGLE_CLIENT_ID.replace(/^(.{6}).+(.{6})$/, '$1...$2');
-  console.log('✅ Google Client ID loaded:', masked);
-} else {
-  console.log('⚠️ Google Client ID not configured.');
-}
-
-// ========== VERIFY GOOGLE TOKEN ==========
 async function verifyIdToken(idToken) {
   if (!googleClient) throw new Error('Google client not configured');
-  try {
-    const ticket = await googleClient.verifyIdToken({
-      idToken,
-      audience: GOOGLE_CLIENT_ID,
-    });
-    return ticket.getPayload();
-  } catch (error) {
-    throw new Error(`Invalid ID token: ${error.message}`);
-  }
+
+  const ticket = await googleClient.verifyIdToken({
+    idToken,
+    audience: GOOGLE_CLIENT_ID,
+  });
+
+  return ticket.getPayload();
 }
 
-// ========== IP QUOTA MIDDLEWARE ==========
+// ========== IP QUOTA ==========
 const maxPerMinuteDB = parseInt(process.env.MAX_PER_MINUTE || '60', 10);
 
 function ipQuotaMiddleware(req, res, next) {
-  if (!db) return next(); // skip if DB unavailable
-
   const ip = req.ip || req.connection.remoteAddress || 'unknown';
   const windowStart = Math.floor(Date.now() / 60000);
 
   db.get(
-    'SELECT count FROM ip_quota WHERE ip = ? AND window_start = ?',
+    'SELECT id, count FROM ip_quota WHERE ip = ? AND window_start = ?',
     [ip, windowStart],
     (err, row) => {
       if (err) return next();
-      const count = row ? row.count : 0;
 
-      if (count >= maxPerMinuteDB) {
+      if (!row) {
+        db.run(
+          'INSERT INTO ip_quota (ip, window_start, count) VALUES (?, ?, 1)',
+          [ip, windowStart]
+        );
+        return next();
+      }
+
+      if (row.count >= maxPerMinuteDB)
         return res.status(429).json({ error: 'IP quota exceeded' });
-      }
 
-      if (row) {
-        db.run('UPDATE ip_quota SET count = ? WHERE ip = ? AND window_start = ?', [count + 1, ip, windowStart]);
-      } else {
-        db.run('INSERT INTO ip_quota (ip, window_start, count) VALUES (?, ?, 1)', [ip, windowStart]);
-      }
+      db.run(
+        'UPDATE ip_quota SET count = count + 1 WHERE ip = ? AND window_start = ?',
+        [ip, windowStart]
+      );
+
       next();
     }
   );
@@ -128,40 +127,42 @@ app.get('/', (req, res) => {
       <meta charset="utf-8">
       <title>WIMPY AI</title>
       <style>
-        body { background: #0a0a0a; color: #0ff; font-family: 'Courier New', monospace; padding: 2rem; margin: 0; }
-        h1 { color: gold; text-shadow: 0 0 10px gold; margin-bottom: 1rem; }
+        body {
+          background: #0a0a0a;
+          color: #0ff;
+          font-family: 'Courier New', monospace;
+          padding: 2rem;
+        }
+        h1 {
+          color: gold;
+          text-shadow: 0 0 10px gold;
+        }
       </style>
     </head>
     <body>
       <h1>⚡ WIMPY AI</h1>
-      <p>Server is live.</p>
+      <p>Server is running.</p>
+      <p>Endpoints: /api/chat, /api/history</p>
     </body>
     </html>
   `);
 });
 
-// ========== API: CHAT ==========
+// ========== HELPERS ==========
 function validMessages(messages) {
   if (!Array.isArray(messages)) return false;
   return messages.every(m => m && typeof m.role === 'string' && (m.content || m.text));
 }
 
-app.options('/api/chat', (req, res) => res.sendStatus(204));
-
-app.all('/api/chat', apiLimiter, (req, res, next) => {
-  if (req.method === 'POST') return next();
-  res.status(405).json({ error: 'Use POST /api/chat' });
-});
-
+// ========== POST /api/chat ==========
 app.post('/api/chat', apiLimiter, ipQuotaMiddleware, async (req, res) => {
-  if (!OPENAI_KEY && !OPENROUTER_KEY) {
-    return res.status(500).json({ error: 'No API key configured' });
-  }
+  if (!OPENAI_KEY && !OPENROUTER_KEY)
+    return res.status(500).json({ error: 'Missing API keys' });
 
   const { model, messages } = req.body;
-  if (!validMessages(messages)) {
-    return res.status(400).json({ error: 'Invalid messages format' });
-  }
+
+  if (!validMessages(messages))
+    return res.status(400).json({ error: 'Invalid messages' });
 
   try {
     let resp;
@@ -169,128 +170,138 @@ app.post('/api/chat', apiLimiter, ipQuotaMiddleware, async (req, res) => {
 
     if (OPENROUTER_KEY) {
       headers.Authorization = `Bearer ${OPENROUTER_KEY}`;
-      resp = await axios.post('https://openrouter.ai/api/v1/chat/completions', {
-        model: model || 'openchat/openchat-7b:free',
-        messages,
-      }, { headers });
+      resp = await axios.post(
+        'https://openrouter.ai/api/v1/chat/completions',
+        { model: model || 'openchat/openchat-7b:free', messages },
+        { headers }
+      );
     } else {
       headers.Authorization = `Bearer ${OPENAI_KEY}`;
-      resp = await axios.post('https://api.openai.com/v1/chat/completions', {
-        model: model || 'gpt-4o-mini',
-        messages,
-        max_tokens: 1000,
-      }, { headers });
+      resp = await axios.post(
+        'https://api.openai.com/v1/chat/completions',
+        { model: model || 'gpt-4o-mini', messages, max_tokens: 1000 },
+        { headers }
+      );
     }
 
-    return res.json(resp.data);
+    res.json(resp.data);
   } catch (err) {
-    const status = err.response?.status || 500;
-    const data = err.response?.data || { error: err.message };
-    return res.status(status).json(data);
+    res
+      .status(err.response?.status || 500)
+      .json(err.response?.data || { error: err.message });
   }
 });
 
-// ========== API: SAVE HISTORY ==========
+// ========== POST /api/history ==========
 app.post('/api/history', apiLimiter, ipQuotaMiddleware, async (req, res) => {
-  if (!db) return res.status(503).json({ error: 'DB unavailable' });
-
   try {
     const auth = req.headers.authorization;
     let verifiedEmail = null;
 
     if (auth?.startsWith('Bearer ')) {
       const token = auth.slice(7);
-      try { verifiedEmail = (await verifyIdToken(token)).email; }
-      catch { return res.status(401).json({ error: 'Invalid ID token' }); }
+      verifiedEmail = (await verifyIdToken(token)).email;
     }
 
     const { user, items } = req.body;
     const targetUser = verifiedEmail || user;
-    if (!targetUser || !Array.isArray(items)) {
-      return res.status(400).json({ error: 'Invalid payload' });
-    }
 
-    const stmt = db.prepare('INSERT INTO chats (user, role, text, html) VALUES (?, ?, ?, ?)');
+    if (!targetUser || !Array.isArray(items))
+      return res.status(400).json({ error: 'Invalid payload' });
+
+    const stmt = db.prepare(
+      'INSERT INTO chats (user, role, text, html) VALUES (?, ?, ?, ?)'
+    );
+
     db.serialize(() => {
-      items.forEach(it =>
-        stmt.run(targetUser, it.role || 'user', it.text || '', it.html || null)
-      );
+      items.forEach(it => {
+        stmt.run(targetUser, it.role || 'user', it.text || '', it.html || null);
+      });
+
       stmt.finalize(err => {
         if (err) return res.status(500).json({ error: 'DB write failed' });
-        return res.json({ ok: true });
+        res.json({ ok: true });
       });
     });
-  } catch {
-    return res.status(500).json({ error: 'Server error' });
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' });
   }
 });
 
-// ========== API: GET HISTORY (FIXED — NOW ASYNC) ==========
+// ========== GET /api/history ==========
 app.get('/api/history', apiLimiter, ipQuotaMiddleware, async (req, res) => {
-  if (!db) return res.status(503).json({ error: 'DB unavailable' });
+  try {
+    const auth = req.headers.authorization;
+    let verifiedEmail = null;
 
-  let verifiedEmail = null;
-  const auth = req.headers.authorization;
-
-  if (auth?.startsWith('Bearer ')) {
-    const token = auth.slice(7);
-    try { verifiedEmail = (await verifyIdToken(token)).email; }
-    catch { return res.status(401).json({ error: 'Invalid ID token' }); }
-  }
-
-  const user = verifiedEmail || req.query.user || 'local';
-  const limit = Math.min(parseInt(req.query.limit || '200'), 1000);
-  const offset = Math.max(parseInt(req.query.offset || '0'), 0);
-
-  db.all(
-    'SELECT id, role, text, html, created_at FROM chats WHERE user = ? ORDER BY id ASC LIMIT ? OFFSET ?',
-    [user, limit, offset],
-    (err, rows) => {
-      if (err) return res.status(500).json({ error: 'DB read failed' });
-      return res.json({ items: rows });
+    if (auth?.startsWith('Bearer ') && googleClient) {
+      const token = auth.slice(7);
+      verifiedEmail = (await verifyIdToken(token)).email;
     }
-  );
+
+    const user = verifiedEmail || req.query.user || 'local';
+    const limit = Math.min(parseInt(req.query.limit || '200'), 1000);
+    const offset = Math.max(parseInt(req.query.offset || '0'), 0);
+
+    db.all(
+      `SELECT id, role, text, html, created_at 
+       FROM chats 
+       WHERE user = ? 
+       ORDER BY id ASC 
+       LIMIT ? OFFSET ?`,
+      [user, limit, offset],
+      (err, rows) => {
+        if (err) return res.status(500).json({ error: 'DB read failed' });
+        res.json({ items: rows });
+      }
+    );
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' });
+  }
 });
 
-// ========== API: VERIFY GOOGLE TOKEN ==========
+// ========== POST /api/verify-google ==========
 app.post('/api/verify-google', apiLimiter, async (req, res) => {
-  const token = req.body.id_token || (req.headers.authorization?.startsWith('Bearer ')
-    ? req.headers.authorization.slice(7)
-    : null);
+  if (!googleClient)
+    return res.status(400).json({ error: 'Google client not configured' });
+
+  const token =
+    req.body.id_token ||
+    (req.headers.authorization?.startsWith('Bearer ')
+      ? req.headers.authorization.slice(7)
+      : null);
 
   if (!token) return res.status(400).json({ error: 'Missing id_token' });
 
   try {
     const payload = await verifyIdToken(token);
-    return res.json({ ok: true, payload });
+    res.json({ ok: true, payload });
   } catch (e) {
-    return res.status(401).json({ error: 'Invalid ID token', detail: e.message });
+    res.status(401).json({ error: 'Invalid ID token' });
   }
 });
 
-// ========== API: DELETE HISTORY (FIXED — NOW ASYNC) ==========
+// ========== DELETE /api/history ==========
 app.delete('/api/history', apiLimiter, ipQuotaMiddleware, async (req, res) => {
-  if (!db) return res.status(503).json({ error: 'DB unavailable' });
-
-  let verifiedEmail = null;
   const auth = req.headers.authorization;
+  let verifiedEmail = null;
 
-  if (auth?.startsWith('Bearer ')) {
+  if (auth?.startsWith('Bearer ') && googleClient) {
     const token = auth.slice(7);
-    try { verifiedEmail = (await verifyIdToken(token)).email; }
-    catch { return res.status(401).json({ error: 'Invalid ID token' }); }
+    verifiedEmail = (await verifyIdToken(token)).email;
   }
 
   const user = verifiedEmail || req.body.user;
+
   if (!user) return res.status(400).json({ error: 'User required' });
 
   db.run('DELETE FROM chats WHERE user = ?', [user], function (err) {
     if (err) return res.status(500).json({ error: 'DB delete failed' });
-    return res.json({ ok: true, deleted: this.changes });
+    res.json({ ok: true, deleted: this.changes });
   });
 });
 
 // ========== START SERVER ==========
 app.listen(PORT, () => {
-  console.log(`🚀 WIMPY AI running on port ${PORT}`);
+  console.log(`🚀 WIMPY AI running on http://localhost:${PORT}`);
 });
