@@ -263,3 +263,38 @@ app.delete('/api/history', apiLimiter, ipQuotaMiddleware, async (req, res) => {
     return res.status(500).json({ error: 'Server error' });
   }
 });
+
+const express = require('express');
+const path = require('path');
+
+const app = express();
+
+// 👇 ADD THIS — serve static files (optional but recommended)
+app.use(express.static('public')); // serves files from /public folder
+
+// 👇 ADD THIS — fallback route for /
+app.get('/', (req, res) => {
+  // Option A: Simple message (quick test)
+  res.send(`
+    <html>
+      <body style="background: #0a0a0a; color: #0ff; font-family: monospace; padding: 2rem;">
+        <h1>⚡ WIMPY AI</h1>
+        <p>✅ Server is live!</p>
+        <p>Theme: <span style="color: gold;">Cyberpunk Gold & Green</span></p>
+        <p>Ready for <span style="color: lime;">serious</span> or <span style="color: red;">unhinged</span> mode.</p>
+      </body>
+    </html>
+  `);
+});
+
+// Optional: catch-all for SPA (if you're building a frontend app)
+app.get('*', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+// 🔑 Start server on Render's port
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`🚀 Wimpy AI running on port ${PORT}`);
+});
+
