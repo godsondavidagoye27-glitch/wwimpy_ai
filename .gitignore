@@ -178,3 +178,11 @@ coverage/
 .env 
 .env 
 >>>>>>> 93bbf6c (WIMPY initial commit)
+# Environment variables
+.env
+.env.local
+.env.development
+.env.production
+.env.test
+.env.staging
+.env.production.local
