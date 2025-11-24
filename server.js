@@ -1,12 +1,3 @@
-process.on('uncaughtException', (err) => {
-  console.error('🚨 Uncaught Exception:', err);
-  process.exit(1);
-});
-
-process.on('unhandledRejection', (err) => {
-  console.error('🚨 Unhandled Rejection:', err);
-  process.exit(1);
-});
 // ========== DEPENDENCIES ==========
 const express = require('express');
 const axios = require('axios');
@@ -31,7 +22,7 @@ const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || null;
 // ========== MIDDLEWARE ==========
 app.use(cors());
 app.use(express.json({ limit: '1mb' }));
-app.use(express.static(path.join(__dirname, 'public'))); // ✅ Serve static files from /public
+app.use(express.static('public'));
 
 // Logger
 app.use((req, res, next) => {
@@ -47,56 +38,81 @@ const apiLimiter = rateLimit({
   legacyHeaders: false,
 });
 
-// ========== DATABASE ==========
-const DB_PATH = path.join(__dirname, 'wimpy.db');
-const db = new sqlite3.Database(DB_PATH);
-db.serialize(() => {
-  db.run(`CREATE TABLE IF NOT EXISTS chats (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user TEXT,
-    role TEXT,
-    text TEXT,
-    html TEXT,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-  )`);
-  db.run(`CREATE TABLE IF NOT EXISTS ip_quota (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    ip TEXT,
-    window_start INTEGER,
-    count INTEGER
-  )`);
-});
+// ========== DATABASE (IN-MEMORY FOR RENDER SAFETY) ==========
+let db = null;
 
+try {
+  db = new sqlite3.Database(':memory:');
+  db.serialize(() => {
+    db.run(`CREATE TABLE chats (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user TEXT,
+      role TEXT,
+      text TEXT,
+      html TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )`);
+    
+    db.run(`CREATE TABLE ip_quota (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      ip TEXT,
+      window_start INTEGER,
+      count INTEGER
+    )`);
+  });
+  console.log('✅ Using in-memory SQLite database');
+} catch (err) {
+  console.error('❌ Failed to initialize DB:', err.message);
+}
+
+// ========== GOOGLE AUTH ==========
 const googleClient = GOOGLE_CLIENT_ID ? new OAuth2Client(GOOGLE_CLIENT_ID) : null;
 
 if (GOOGLE_CLIENT_ID) {
   const masked = GOOGLE_CLIENT_ID.replace(/^(.{6}).+(.{6})$/, '$1...$2');
-  console.log('Google Client ID loaded:', masked);
+  console.log('✅ Google Client ID loaded:', masked);
 } else {
-  console.log('Google Client ID not configured.');
+  console.log('⚠️ Google Client ID not configured.');
 }
 
-// ✅ ADDED HERE — BEFORE ANY USAGE
+// ✅ DEFINED BEFORE USAGE
 async function verifyIdToken(idToken) {
   if (!googleClient) throw new Error('Google client not configured');
-  const ticket = await googleClient.verifyIdToken({ idToken, audience: GOOGLE_CLIENT_ID });
-  const payload = ticket.getPayload();
-  return payload; // includes email, name, sub
+  try {
+    const ticket = await googleClient.verifyIdToken({
+      idToken,
+      audience: GOOGLE_CLIENT_ID,
+    });
+    const payload = ticket.getPayload();
+    return payload;
+  } catch (error) {
+    throw new Error(`Invalid ID token: ${error.message}`);
+  }
 }
+
 // ========== IP QUOTA MIDDLEWARE ==========
 const maxPerMinuteDB = parseInt(process.env.MAX_PER_MINUTE || '60', 10);
+
 function ipQuotaMiddleware(req, res, next) {
+  if (!db) return next(); // skip if DB unavailable
+
   const ip = req.ip || req.connection.remoteAddress || 'unknown';
   const windowStart = Math.floor(Date.now() / 60000);
-  db.get('SELECT id, count FROM ip_quota WHERE ip = ? AND window_start = ?', [ip, windowStart], (err, row) => {
+
+  db.get('SELECT count FROM ip_quota WHERE ip = ? AND window_start = ?', [ip, windowStart], (err, row) => {
     if (err) return next();
-    if (!row) {
-      db.run('INSERT INTO ip_quota (ip, window_start, count) VALUES (?, ?, 1)', [ip, windowStart]);
-      return next();
+    
+    const count = row ? row.count : 0;
+    if (count >= maxPerMinuteDB) {
+      return res.status(429).json({ error: 'IP quota exceeded' });
     }
-    if (row.count >= maxPerMinuteDB) return res.status(429).json({ error: 'IP quota exceeded' });
-    db.run('UPDATE ip_quota SET count = count + 1 WHERE ip = ? AND window_start = ?', [ip, windowStart]);
-    return next();
+
+    if (row) {
+      db.run('UPDATE ip_quota SET count = ? WHERE ip = ? AND window_start = ?', [count + 1, ip, windowStart]);
+    } else {
+      db.run('INSERT INTO ip_quota (ip, window_start, count) VALUES (?, ?, 1)', [ip, windowStart]);
+    }
+    next();
   });
 }
 
@@ -137,6 +153,7 @@ app.get('/', (req, res) => {
 });
 
 // ========== API ROUTES ==========
+
 // Preflight & method restriction
 app.options('/api/chat', (req, res) => res.sendStatus(204));
 app.all('/api/chat', apiLimiter, (req, res, next) => {
@@ -188,8 +205,9 @@ app.post('/api/chat', apiLimiter, ipQuotaMiddleware, async (req, res) => {
 
 // POST /api/history
 app.post('/api/history', apiLimiter, ipQuotaMiddleware, async (req, res) => {
+  if (!db) return res.status(503).json({ error: 'DB unavailable' });
+
   try {
-    // (your existing logic — unchanged)
     const auth = req.headers.authorization;
     let verifiedEmail = null;
     if (auth?.startsWith('Bearer ')) {
@@ -217,6 +235,8 @@ app.post('/api/history', apiLimiter, ipQuotaMiddleware, async (req, res) => {
 
 // GET /api/history
 app.get('/api/history', apiLimiter, ipQuotaMiddleware, (req, res) => {
+  if (!db) return res.status(503).json({ error: 'DB unavailable' });
+
   const auth = req.headers.authorization;
   let verifiedEmail = null;
   if (auth?.startsWith('Bearer ')) {
@@ -252,6 +272,8 @@ app.post('/api/verify-google', apiLimiter, async (req, res) => {
 
 // DELETE /api/history
 app.delete('/api/history', apiLimiter, ipQuotaMiddleware, (req, res) => {
+  if (!db) return res.status(503).json({ error: 'DB unavailable' });
+
   const auth = req.headers.authorization;
   let verifiedEmail = null;
   if (auth?.startsWith('Bearer ')) {
@@ -270,7 +292,7 @@ app.delete('/api/history', apiLimiter, ipQuotaMiddleware, (req, res) => {
 
 // ========== START SERVER ==========
 app.listen(PORT, () => {
-  console.log(`🚀 WIMPY AI running on http://localhost:${PORT}`);
+  console.log(`🚀 WIMPY AI running on port ${PORT}`);
   console.log(`✅ Root route: GET /`);
   console.log(`✅ API endpoints: /api/chat, /api/history, /api/verify-google`);
 });
