@@ -1,0 +1,19 @@
+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
+
+
+362595761086-asa7cilagsq43fghvc2t66stl8a0n0i0.apps.googleusercontent.com
+
+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
+
+
+git remote add origin https://github.com/godsondavidagoye27-glitch/wimpy-ai.git
+git branch -M main
+git push -u origin main
+
+ git config --global user.email "godsondavidagoye27.com"
+  git config --global user.name "godsondavidagoye27-glitch"
+
+
+  git remote add origin https://github.com/godsondavidagoye27-glitch/wimpyai.git
+git branch -M main
+git push -u origin main

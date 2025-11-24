@@ -1,0 +1,720 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>WIMPY ULTRA</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+  <style>
+    :root {
+      --bg: #03040a;
+      --panel: rgba(10, 10, 10, 0.6);
+      --accent-gold: #e6b800;
+      --accent-green: #22ff99;
+      --muted: rgba(255,255,255,0.85);
+      --text: #eaf7ee;
+      --border: rgba(230,184,0,0.12);
+    }
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      background: radial-gradient(1200px 600px at 10% 10%, rgba(34,255,153,0.03), transparent),
+                  linear-gradient(135deg, #020307, #071018 60%);
+      color: var(--text);
+      font-family: 'Segoe UI', 'Inter', system-ui, sans-serif;
+      min-height: 100vh;
+      overflow-x: hidden;
+      position: relative;
+    }
+
+    /* Cyber grid background */
+    body::before {
+      content: "";
+      position: absolute;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: 
+        linear-gradient(rgba(0,247,255,0.05) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(0,247,255,0.05) 1px, transparent 1px);
+      background-size: 40px 40px;
+      pointer-events: none;
+      z-index: -1;
+    }
+
+    /* Glowing corner accents */
+    .corner {
+      position: fixed;
+      width: 200px;
+      height: 200px;
+      z-index: -1;
+    }
+    .corner.tl { top: -60px; left: -60px; border-radius: 0 0 100% 0; box-shadow: 0 0 120px 40px var(--accent-green); opacity: 0.14; }
+    .corner.br { bottom: -60px; right: -60px; border-radius: 100% 0 0 0; box-shadow: 0 0 120px 40px var(--accent-gold); opacity: 0.12; }
+
+    #container {
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 1.5rem;
+    }
+
+    header {
+      text-align: center;
+      margin: 1.5rem 0;
+    }
+
+    h1 {
+      font-weight: 900;
+      font-size: 3rem;
+      background: linear-gradient(90deg, var(--accent-gold), var(--accent-green));
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+      text-shadow: 0 0 18px rgba(34,255,153,0.06);
+      letter-spacing: -0.6px;
+      margin-bottom: 0.3rem;
+    }
+
+    .tagline {
+      font-size: 1rem;
+      opacity: 0.95;
+      font-weight: 400;
+      color: var(--muted);
+    }
+
+    .screen { transition: opacity 0.5s ease; }
+    #login { margin-top: 4rem; }
+    #wimpy { display: none; }
+
+    /* Login */
+    .login-box {
+      background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 2rem;
+      max-width: 560px;
+      margin: 2rem auto;
+      backdrop-filter: blur(10px);
+      box-shadow: 0 12px 40px rgba(0,0,0,0.6), 0 0 40px rgba(230,184,0,0.02) inset;
+    }
+
+    .login-box input {
+      width: 100%;
+      padding: 0.95rem 1rem;
+      background: rgba(5,8,12,0.7);
+      border: 2px solid rgba(255,255,255,0.03);
+      border-radius: 12px;
+      color: var(--text);
+      font-size: 1rem;
+      text-align: center;
+      margin: 0.8rem 0;
+    }
+
+    .login-box input:focus {
+      outline: none;
+      border-color: var(--accent-red);
+      box-shadow: 0 0 15px rgba(255, 42, 109, 0.4);
+    }
+
+    .login-box button {
+      background: linear-gradient(90deg, var(--accent-gold), rgba(34,255,153,0.08));
+      color: #071018;
+      border: none;
+      padding: 0.95rem 1rem;
+      font-size: 1rem;
+      font-weight: 700;
+      border-radius: 10px;
+      cursor: pointer;
+      width: 100%;
+      transition: transform 0.18s ease;
+    }
+
+    .login-box button:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 5px 20px rgba(0, 247, 255, 0.4);
+    }
+
+    /* Chat */
+    #chat {
+      height: 58vh;
+      overflow-y: auto;
+      padding: 1rem;
+      margin: 1.5rem 0;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* Hide scrollbars but keep scrollable */
+    #chat::-webkit-scrollbar { width: 0 !important; }
+    #chat { -ms-overflow-style: none; scrollbar-width: none; }
+
+    .message {
+      max-width: 85%;
+      padding: 1.2rem 1.5rem;
+      margin: 0.8rem 0;
+      border-radius: 18px;
+      position: relative;
+      animation: fadeIn 0.4s ease;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .user-message {
+      background: rgba(0, 247, 255, 0.15);
+      border: 1px solid var(--accent-blue);
+      align-self: flex-end;
+      border-bottom-right-radius: 6px;
+    }
+
+    .wimpy-message {
+      background: linear-gradient(180deg, rgba(34,255,153,0.03), rgba(230,184,0,0.02));
+      border: 1px solid rgba(34,255,153,0.06);
+      align-self: flex-start;
+      border-bottom-left-radius: 6px;
+    }
+
+    .wimpy-message::before {
+      content: "WIMPY";
+      position: absolute;
+      top: -20px;
+      left: 12px;
+      font-size: 0.75rem;
+      color: var(--accent-gold);
+      font-weight: 800;
+      letter-spacing: 1px;
+    }
+
+    .user-message::before {
+      content: "YOU";
+      position: absolute;
+      top: -20px;
+      right: 12px;
+      font-size: 0.75rem;
+      color: var(--accent-green);
+      font-weight: 700;
+      letter-spacing: 1px;
+    }
+
+    /* Input area */
+    #input-area {
+      display: flex;
+      gap: 12px;
+      margin-top: 1rem;
+    }
+
+    #text-input {
+      flex: 1;
+      padding: 1rem;
+      background: rgba(10, 15, 25, 0.7);
+      border: 2px solid var(--border);
+      border-radius: 16px;
+      color: white;
+      font-size: 1.05rem;
+      outline: none;
+    }
+
+    #text-input:focus {
+      border-color: var(--accent-blue);
+      box-shadow: 0 0 15px rgba(0, 247, 255, 0.2);
+    }
+
+    .btn {
+      width: 56px;
+      height: 56px;
+      border-radius: 50%;
+      border: none;
+      background: var(--panel);
+      color: white;
+      font-size: 1.3rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: all 0.3s;
+      box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+    }
+
+    .btn:hover {
+      transform: scale(1.08);
+    }
+
+    #mic-btn {
+      background: linear-gradient(135deg, rgba(34,255,153,0.06), rgba(230,184,0,0.06));
+      color: var(--accent-gold);
+      border: 1px solid rgba(230,184,0,0.06);
+    }
+
+    #mic-btn.recording {
+      background: linear-gradient(135deg, rgba(255,42,109,0.12), rgba(255,42,109,0.06));
+      animation: pulse 1.5s infinite;
+    }
+
+    @keyframes pulse {
+      0% { box-shadow: 0 0 0 0 rgba(255, 42, 109, 0.7); }
+      70% { box-shadow: 0 0 0 12px rgba(255, 42, 109, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(255, 42, 109, 0); }
+    }
+
+    #send-btn {
+      background: linear-gradient(90deg, var(--accent-gold), var(--accent-green));
+      color: #021017;
+    }
+
+    /* Status bar */
+    #status {
+      text-align: center;
+      font-size: 0.85rem;
+      opacity: 0.7;
+      margin-top: 1rem;
+      height: 1.5rem;
+    }
+
+    /* Helpers */
+    .blink { animation: blink 1.2s infinite; }
+    @keyframes blink { 50% { opacity: 0; } }
+
+    .thinking {
+      display: inline-block;
+      width: 20px;
+      height: 10px;
+    }
+    .thinking span { 
+      display: inline-block; 
+      width: 4px; 
+      height: 4px; 
+      margin: 0 1px; 
+      background: var(--accent-blue); 
+      border-radius: 50%; 
+      animation: bounce 1.4s infinite ease-in-out;
+    }
+    .thinking span:nth-child(2) { animation-delay: 0.2s; }
+    .thinking span:nth-child(3) { animation-delay: 0.4s; }
+    @keyframes bounce {
+      0%, 100% { transform: translateY(0); }
+      50% { transform: translateY(-6px); }
+    }
+
+    /* Responsive */
+    @media (max-width: 768px) {
+      h1 { font-size: 2.4rem; }
+      .message { max-width: 95%; }
+      #input-area { flex-direction: column; }
+      .btn { width: 100%; height: 56px; border-radius: 16px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="corner tl"></div>
+  <div class="corner br"></div>
+
+  <div id="container">
+    <header>
+      <h1>WIMPY ULTRA</h1>
+      <p class="tagline">Unhinged • Genius • Always Listening</p>
+    </header>
+
+    <!-- LOGIN -->
+    <div id="login" class="screen">
+      <div class="login-box">
+        <i class="fas fa-lock" style="font-size: 3rem; color: var(--accent-gold); margin-bottom: 1rem;"></i>
+        <p class="blink">🔐 Enter password to awaken WIMPY — or sign in with Google.</p>
+        <input type="password" id="pwd" placeholder="Type 'wimpykid'..." autofocus />
+        <button id="unlock-btn" onclick="unlock()">
+          <i class="fas fa-key"></i> UNLOCK WIMPY
+        </button>
+
+        <div style="margin:12px 0; text-align:center;">— OR —</div>
+        <div id="gsi-button" style="display:flex; justify-content:center; margin-bottom:0.6rem;"></div>
+
+        <button onclick="skipPassword()" style="margin-top:8px; background:transparent; border:1px dashed rgba(255,255,255,0.06); color:var(--muted);">
+          Skip password (insecure)
+        </button>
+
+        <p id="hint" style="margin-top: 1.2rem; font-size: 0.9rem; opacity:0.7;">
+          Tip: To enable Gmail sign-in provide a Google Client ID in the script below.
+        </p>
+      </div>
+    </div>
+
+    <!-- MAIN CHAT -->
+    <div id="wimpy" class="screen">
+      <div id="controls" style="display:flex; gap:12px; align-items:center; justify-content:space-between;">
+        <div style="display:flex; gap:8px; align-items:center;">
+          <div id="user-badge" style="font-size:0.9rem; color:var(--muted);">Not signed in</div>
+          <div style="display:flex; gap:6px;">
+            <button id="mode-serious" class="btn" style="padding:8px 12px; border-radius:10px; font-size:0.85rem;">Serious</button>
+            <button id="mode-unhinged" class="btn" style="padding:8px 12px; border-radius:10px; font-size:0.85rem;">Unhinged</button>
+          </div>
+        </div>
+
+        <div style="display:flex; gap:8px; align-items:center;">
+          <button id="tts-toggle" class="btn" title="Toggle voice output">🔊</button>
+          <button id="export-btn" class="btn" title="Export chat">⤓</button>
+          <button id="signout-btn" class="btn" title="Sign out" style="display:none;">Sign out</button>
+        </div>
+      </div>
+
+      <div id="chat">
+        <!-- Messages appear here -->
+      </div>
+
+      <div id="input-area">
+        <input type="text" id="text-input" placeholder="Ask anything... or click 🎤 to speak" />
+        <button class="btn" id="mic-btn" onclick="toggleListen()">
+          <i class="fas fa-microphone"></i>
+        </button>
+        <button class="btn" id="send-btn" onclick="sendMessage()">
+          <i class="fas fa-paper-plane"></i>
+        </button>
+      </div>
+
+      <div id="status"></div>
+    </div>
+  </div>
+
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+  <script>
+    // ===== CONFIG =====
+    // API key removed from client for security. The frontend will call the local proxy at /api/chat.
+    const MODEL = "gpt-4o-mini"; // change server-side if needed
+    const GOOGLE_CLIENT_ID = "362595761086-asa7cilagsq43fghvc2t66stl8a0n0i0.apps.googleusercontent.com"; // configured client id
+
+    // ===== STATE =====
+    let isListening = false;
+    let recognition;
+    let synth = window.speechSynthesis;
+    let isWaiting = false; // prevent concurrent AI requests
+    let currentUser = null; // {email, name}
+    let currentIdToken = null; // verified ID token to send to server
+    let settings = { mode: 'unhinged', tts: true };
+
+    // DOM refs
+    const pwdInput = document.getElementById('pwd');
+    const chatEl = document.getElementById('chat');
+    const textInput = document.getElementById('text-input');
+    const micBtn = document.getElementById('mic-btn');
+    const statusEl = document.getElementById('status');
+    const userBadge = document.getElementById('user-badge');
+    const ttsToggle = document.getElementById('tts-toggle');
+    const exportBtn = document.getElementById('export-btn');
+    const signoutBtn = document.getElementById('signout-btn');
+    const modeSerious = document.getElementById('mode-serious');
+    const modeUnhinged = document.getElementById('mode-unhinged');
+
+    // Safe localStorage keys
+    function chatKey(email) { return `wimpy_chat_${email || 'local'}`; }
+    function settingsKey(email) { return `wimpy_settings_${email || 'local'}`; }
+
+    // Initialize speech recognition
+    try {
+      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+      recognition = new SpeechRecognition();
+      recognition.continuous = false;
+      recognition.interimResults = false;
+      recognition.lang = 'en-US';
+
+      recognition.onresult = (event) => {
+        const transcript = event.results[0][0].transcript.trim();
+        addUserMessage(transcript);
+        sendToAI(transcript);
+        stopListening();
+      };
+
+      recognition.onerror = () => {
+        setStatus('⚠️ Mic error. Check permissions.', 3000);
+        stopListening();
+      };
+    } catch (e) {
+      console.warn('SpeechRecognition not supported');
+    }
+
+    // UI helpers
+    function setStatus(msg, timeout = 0) {
+      statusEl.textContent = msg;
+      if (timeout) setTimeout(() => { if (statusEl.textContent === msg) statusEl.textContent = ''; }, timeout);
+    }
+
+    function saveChat() {
+      const email = currentUser ? currentUser.email : 'local';
+      const items = Array.from(chatEl.children)
+        .filter(node => node.id !== 'wimpy-thinking' && !node.classList.contains('thinking'))
+        .map(node => ({
+          role: node.classList.contains('user-message') ? 'user' : 'wimpy',
+          text: node.textContent,
+          html: node.innerHTML
+        }));
+
+      if (currentUser && currentUser.email) {
+        // send to server for persistence (include ID token if available)
+        const headers = { 'Content-Type': 'application/json' };
+        if (currentIdToken) headers['Authorization'] = 'Bearer ' + currentIdToken;
+        fetch('/api/history', { method: 'POST', headers, body: JSON.stringify({ user: currentUser.email, items }) })
+          .then(r => r.json()).catch(e => console.warn('Failed saving server history', e));
+      }
+
+      localStorage.setItem(chatKey(email), JSON.stringify(items));
+    }
+
+    function loadChat() {
+      const email = currentUser ? currentUser.email : 'local';
+      chatEl.innerHTML = '';
+      if (currentUser && currentUser.email) {
+        // load from server
+        const headers = {};
+        if (currentIdToken) headers['Authorization'] = 'Bearer ' + currentIdToken;
+        fetch(`/api/history?user=${encodeURIComponent(currentUser.email)}`, { headers }).then(r => r.json()).then(data => {
+          if (!data.items) return;
+          data.items.forEach(it => {
+            const div = document.createElement('div');
+            div.className = 'message ' + (it.role === 'user' ? 'user-message' : 'wimpy-message');
+            div.innerHTML = it.html || it.text;
+            chatEl.appendChild(div);
+          });
+          chatEl.scrollTop = chatEl.scrollHeight;
+        }).catch(err => { console.warn('Failed to load server history', err); });
+      } else {
+        const raw = localStorage.getItem(chatKey(email));
+        if (!raw) return;
+        try {
+          const items = JSON.parse(raw);
+          items.forEach(it => {
+            const div = document.createElement('div');
+            div.className = 'message ' + (it.role === 'user' ? 'user-message' : 'wimpy-message');
+            div.innerHTML = it.html || it.text;
+            chatEl.appendChild(div);
+          });
+          chatEl.scrollTop = chatEl.scrollHeight;
+        } catch (e) { console.warn('Failed to load chat', e); }
+      }
+    }
+
+    function saveSettings() {
+      const email = currentUser ? currentUser.email : 'local';
+      localStorage.setItem(settingsKey(email), JSON.stringify(settings));
+    }
+
+    function loadSettings() {
+      const email = currentUser ? currentUser.email : 'local';
+      const raw = localStorage.getItem(settingsKey(email));
+      if (!raw) return;
+      try { Object.assign(settings, JSON.parse(raw)); } catch (e) {}
+      updateModeUI();
+      updateTTSUI();
+    }
+
+    function addUserMessage(text) {
+      const div = document.createElement('div');
+      div.className = 'message user-message';
+      div.textContent = text;
+      chatEl.appendChild(div);
+      chatEl.scrollTop = chatEl.scrollHeight;
+      saveChat();
+    }
+
+    // addWimpyMessage: persist controls whether the message is saved to localStorage
+    function addWimpyMessage(html, speak = true, persist = true) {
+      const div = document.createElement('div');
+      div.className = 'message wimpy-message';
+      div.innerHTML = html;
+      chatEl.appendChild(div);
+      chatEl.scrollTop = chatEl.scrollHeight;
+      if (persist) saveChat();
+
+      if (settings.tts && speak) {
+        const clean = html.replace(/<[^>]*>/g, '').replace(/WIMPY:/, '');
+        if (synth.speaking) synth.cancel();
+        const utter = new SpeechSynthesisUtterance(clean);
+        utter.rate = 0.95;
+        utter.pitch = 0.95 + Math.random() * 0.18;
+        const voices = synth.getVoices();
+        utter.voice = voices.find(v => /Google.*English|Microsoft|Adam|Alloy/i.test(v.name)) || voices[0] || null;
+        setTimeout(() => synth.speak(utter), 350);
+      }
+    }
+
+    function showThinking() {
+      // transient thinking indicator (not persisted)
+      removeThinking();
+      const div = document.createElement('div');
+      div.id = 'wimpy-thinking';
+      div.className = 'message wimpy-message thinking';
+      div.innerHTML = `<span class="thinking"><span></span><span></span><span></span></span> Thinking...`;
+      chatEl.appendChild(div);
+      chatEl.scrollTop = chatEl.scrollHeight;
+    }
+
+    function removeThinking() {
+      const el = document.getElementById('wimpy-thinking');
+      if (el) el.remove();
+    }
+
+    // AUTH: unlock / skip / Google sign-in
+    function unlock(skip = false) {
+      if (skip || pwdInput.value.trim().toLowerCase() === 'wimpykid') {
+        document.getElementById('login').style.opacity = '0';
+        setTimeout(() => {
+          document.getElementById('login').style.display = 'none';
+          document.getElementById('wimpy').style.display = 'block';
+          setTimeout(() => {
+            document.getElementById('wimpy').style.opacity = '1';
+            loadSettings();
+            loadChat();
+            greet();
+          }, 120);
+        }, 300);
+      } else {
+        pwdInput.style.borderColor = 'rgba(255,80,80,0.9)';
+        pwdInput.value = '';
+        pwdInput.placeholder = 'Wrong! 😤 Try again.';
+        setTimeout(() => pwdInput.style.borderColor = '', 1500);
+      }
+    }
+
+    function skipPassword() { unlock(true); }
+
+    pwdInput.addEventListener('keypress', e => e.key === 'Enter' && unlock());
+    textInput.addEventListener('keypress', e => e.key === 'Enter' && sendMessage());
+
+    // VOICE control
+    function toggleListen() { if (!recognition) { setStatus('🎤 Voice not supported in this browser.', 2500); return; } if (isListening) stopListening(); else startListening(); }
+    function startListening() { if (!recognition) return; isListening = true; micBtn.classList.add('recording'); micBtn.innerHTML = '<i class="fas fa-microphone-slash"></i>'; try { recognition.start(); setStatus('🎙️ Listening...'); } catch (e) { stopListening(); setStatus('⛔ Mic access denied.', 2500); } }
+    function stopListening() { isListening = false; micBtn.classList.remove('recording'); micBtn.innerHTML = '<i class="fas fa-microphone"></i>'; if (recognition && recognition.abort) recognition.abort(); setStatus(''); }
+
+    // AI communication
+    async function sendToAI(prompt) {
+      if (!prompt || !prompt.trim()) return;
+      if (isWaiting) { setStatus('Still processing previous request...', 1500); return; }
+      isWaiting = true;
+      const sendBtnEl = document.getElementById('send-btn');
+      const micBtnEl = document.getElementById('mic-btn');
+      if (sendBtnEl) sendBtnEl.disabled = true;
+      if (micBtnEl) micBtnEl.disabled = true;
+      showThinking();
+      try {
+        const systemPrompt = settings.mode === 'serious'
+          ? `You are WIMPY in serious mode: calm, precise, authoritative, concise. Answer thoroughly and accurately. Do not add unhinged jokes.`
+          : `You are WIMPY in unhinged mode: clever, chaotic, human-like. Answer accurately, then add a quirky human flourish or aside. Use emojis sparingly.`;
+
+        // POST to local proxy (server will attach OpenAI API key securely)
+        const response = await fetch('/api/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ model: MODEL, messages: [ { role: 'system', content: systemPrompt }, { role: 'user', content: prompt } ] })
+        });
+
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const data = await response.json();
+        let reply = (data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content) ? data.choices[0].message.content.trim() : JSON.stringify(data);
+
+        if (settings.mode === 'unhinged' && !/\*\*/.test(reply) && Math.random() > 0.35) {
+          const bits = [' ...also I have feelings about bread.', ' ...I once tried to argue with a toaster.', ' ...please feed me metaphorical snacks.'];
+          reply += bits[Math.floor(Math.random()*bits.length)];
+        }
+
+        removeThinking();
+        addWimpyMessage(reply);
+      } catch (err) {
+        removeThinking();
+        let msg = '💥 WIMPY bumped into a network hiccup.';
+        if (err.message && err.message.includes('401')) msg = '🔑 Invalid API key. Replace API_KEY in the code.';
+        else if (err.message && err.message.includes('Failed to fetch')) msg = '🌐 No internet — WIMPY is offline.';
+        // avoid repeating the same error message
+        const last = chatEl.lastChild;
+        if (!(last && last.classList.contains('wimpy-message') && last.textContent === msg)) {
+          addWimpyMessage(msg);
+        } else {
+          setStatus(msg, 2000);
+        }
+      } finally {
+        isWaiting = false;
+        if (sendBtnEl) sendBtnEl.disabled = false;
+        if (micBtnEl) micBtnEl.disabled = false;
+      }
+    }
+
+    function sendMessage() { const text = textInput.value.trim(); if (!text) return; addUserMessage(text); textInput.value = ''; sendToAI(text); }
+
+    // GREETING
+    function greet() { const welcomes = ['🧠 WIMPY ONLINE — ready when you are.', '✨ Hello. I am WIMPY: helpful, weird, and surprisingly polite.', '📡 Connection established. Ask me anything.']; addWimpyMessage(welcomes[Math.floor(Math.random()*welcomes.length)], true); setTimeout(() => synth.getVoices(), 300); }
+
+    // Settings UI
+    function updateModeUI() { modeSerious.style.opacity = settings.mode === 'serious' ? '1' : '0.6'; modeUnhinged.style.opacity = settings.mode === 'unhinged' ? '1' : '0.6'; }
+    function updateTTSUI() { ttsToggle.style.opacity = settings.tts ? '1' : '0.5'; }
+    modeSerious.addEventListener('click', () => { settings.mode = 'serious'; saveSettings(); updateModeUI(); });
+    modeUnhinged.addEventListener('click', () => { settings.mode = 'unhinged'; saveSettings(); updateModeUI(); });
+    ttsToggle.addEventListener('click', () => { settings.tts = !settings.tts; saveSettings(); updateTTSUI(); });
+
+    // Export/import
+    exportBtn.addEventListener('click', () => { const email = currentUser ? currentUser.email : 'local'; const data = localStorage.getItem(chatKey(email)); const blob = new Blob([data || '[]'], { type: 'application/json' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `wimpy-chat-${email || 'local'}.json`; a.click(); URL.revokeObjectURL(url); });
+
+    // Google Sign-in
+    function parseJwt (token) { try { return JSON.parse(atob(token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/'))); } catch(e) { return null; } }
+
+    // Called by Google Identity Services. Sends the raw ID token to our server for verification,
+    // stores the returned payload and keeps the token for future authenticated requests.
+    async function handleCredentialResponse(response) {
+      try {
+        const idToken = response && response.credential;
+        if (!idToken) return console.warn('No credential returned by Google');
+
+        // Optional quick local parse for immediate UI update while server verifies
+        const local = parseJwt(idToken);
+        if (local && local.email) userBadge.textContent = local.email;
+
+        // POST to server verify endpoint
+        const res = await fetch('/api/verify-google', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id_token: idToken })
+        });
+
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          console.warn('Server rejected ID token', err);
+          setStatus('Google sign-in failed (server verification).', 4000);
+          return;
+        }
+
+        const body = await res.json();
+        if (body && body.ok && body.payload) {
+          currentIdToken = idToken; // keep token for history requests
+          const payload = body.payload;
+          setCurrentUser({ email: payload.email, name: payload.name || payload.email });
+          setStatus('Signed in as ' + (payload.email || 'unknown'), 2500);
+        } else {
+          console.warn('Unexpected verify response', body);
+          setStatus('Google verification unexpected response.', 3500);
+        }
+      } catch (e) {
+        console.error('handleCredentialResponse error', e);
+        setStatus('Google sign-in failed.', 3000);
+      }
+    }
+
+    function setCurrentUser(user) { currentUser = user; userBadge.textContent = user.email; signoutBtn.style.display = 'inline-flex'; saveSettings(); loadSettings(); loadChat(); if (document.getElementById('login').style.display !== 'none') unlock(true); }
+
+    function signOut() { currentUser = null; currentIdToken = null; userBadge.textContent = 'Not signed in'; signoutBtn.style.display = 'none'; document.getElementById('login').style.display = 'block'; document.getElementById('login').style.opacity = '1'; document.getElementById('wimpy').style.display = 'none'; }
+    signoutBtn.addEventListener('click', () => { if (window.google && google.accounts && google.accounts.id) google.accounts.id.disableAutoSelect(); signOut(); });
+
+    // Initialize Google button (only if client id replaced)
+    window.onload = () => {
+      if (GOOGLE_CLIENT_ID && GOOGLE_CLIENT_ID !== 'YOUR_GOOGLE_CLIENT_ID' && window.google && google.accounts && google.accounts.id) {
+        google.accounts.id.initialize({ client_id: GOOGLE_CLIENT_ID, callback: handleCredentialResponse, auto_select: false });
+        google.accounts.id.renderButton(document.getElementById('gsi-button'), { theme: 'filled_blue', size: 'large' });
+      } else {
+        const btn = document.createElement('button'); btn.className = 'btn'; btn.textContent = 'Sign in with Google'; btn.onclick = () => alert('Replace GOOGLE_CLIENT_ID in the code to enable Google Sign-In.'); document.getElementById('gsi-button').appendChild(btn);
+      }
+      updateModeUI(); updateTTSUI();
+    };
+
+    // Auto-focus input after login
+    textInput.addEventListener('focus', () => { if (chatEl.children.length === 0) greet(); });
+  </script>
+</body>
+</html>
