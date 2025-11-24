@@ -75,7 +75,7 @@ if (GOOGLE_CLIENT_ID) {
   console.log('⚠️ Google Client ID not configured.');
 }
 
-// ✅ DEFINED BEFORE USAGE
+// ✅ DEFINED BEFORE USAGE — NO DUPLICATES
 async function verifyIdToken(idToken) {
   if (!googleClient) throw new Error('Google client not configured');
   try {
