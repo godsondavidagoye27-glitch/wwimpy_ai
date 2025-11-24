@@ -10,7 +10,7 @@ process.on('unhandledRejection', (err) => {
 
 // ========== DEPENDENCIES ==========
 const express = require('express');
-const axios = require('axios'); // <-- fixed comment
+const axios = require('axios');
 const path = require('path');
 const dotenv = require('dotenv');
 const cors = require('cors');
@@ -118,34 +118,9 @@ function ipQuotaMiddleware(req, res, next) {
   );
 }
 
-// ========== ROOT ROUTE ==========
+// ========== SERVE FRONTEND — ✅ FIXED! ==========
 app.get('/', (req, res) => {
-  res.send(`
-    <!DOCTYPE html>
-    <html>
-    <head>
-      <meta charset="utf-8">
-      <title>WIMPY AI</title>
-      <style>
-        body {
-          background: #0a0a0a;
-          color: #0ff;
-          font-family: 'Courier New', monospace;
-          padding: 2rem;
-        }
-        h1 {
-          color: gold;
-          text-shadow: 0 0 10px gold;
-        }
-      </style>
-    </head>
-    <body>
-      <h1>⚡ WIMPY AI</h1>
-      <p>Server is running.</p>
-      <p>Endpoints: /api/chat, /api/history</p>
-    </body>
-    </html>
-  `);
+  res.sendFile(path.join(__dirname, 'wimpy.html'));
 });
 
 // ========== HELPERS ==========
