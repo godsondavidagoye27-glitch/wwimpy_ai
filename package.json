@@ -1,7 +1,3 @@
-"scripts": {
-  "preinstall": "npm install -g node-gyp",
-  "start": "node server.js"
-}
 {
   "name": "wimpy-proxy",
   "version": "1.0.0",
